@@ -38,12 +38,13 @@ class="form-control" placeholder="이름을 입력하세요">
 - th:errorclass="..."로 에러가 발생했을때의(조건부) 클래스 추가 해준다.
 >타임리프 스프링 검증 오류 통합 기능
 타임리프는 스프링의 BindingResult 를 활용해서 편리하게 검증 오류를 표현하는 기능을 제공한다.
-#fields : #fields 로 BindingResult 가 제공하는 검증 오류에 접근할 수 있다.
+
+"#fields : #fields 로 BindingResult 가 제공하는 검증 오류에 접근할 수 있다.
 th:errors : 해당 필드에 오류가 있는 경우에 태그를 출력한다. th:if 의 편의 버전이다.
 th:errorclass : th:field 에서 지정한 필드에 오류가 있으면 class 정보를 추가한다.
 
 ### BindingResult에 검증 오류를 적용하는 3가지 방법
-1.@ModelAttribute 의 객체에 타입 오류 등으로 바인딩이 실패하는 경우 스프링이 FieldError 생성해서 BindingResult 에 넣어준다.
+1. @ModelAttribute 의 객체에 타입 오류 등으로 바인딩이 실패하는 경우 스프링이 FieldError 생성해서 BindingResult 에 넣어준다.
 2. 개발자가 직접 넣어준다.
 3. Validator 사용 이것은 뒤에서 설명
 
@@ -151,3 +152,104 @@ public void init(WebDataBinder dataBinder) {
 ```
 public String addItemV6(@Validated/*검증 대상 Object 앞에 붙여준다.*/ @ModelAttribute Item item, BindingResult bindingResult..)
 ```
+
+# Bean Validation
+Bean Validator : 인터페이스
+Hibernate Validator : 실제 구현체
+
+예)
+```
+@NotBlank
+private String itemName;
+
+@NotNull
+@Range(min=1000, max=999999)
+private Integer price;
+
+@NotNull
+@Max(9999)
+private Integer quantity;
+```
+
+## 검증 순서
+1. @ModelAttribute 각각의 필드에 타입 변환 시도
+1) 성공하면 다음으로
+2) 실패하면 typeMismatch 로 FieldError 추가
+2. Validator 적용
+   바인딩에 성공한 필드만 Bean Validation 적용
+
+>BeanValidator는 바인딩에 실패한 필드는 BeanValidation을 적용하지 않는다.
+생각해보면 타입 변환에 성공해서 바인딩에 성공한 필드여야 BeanValidation 적용이 의미 있다. (일단 모델 객체에 바인딩 받는 값이 정상으로 들어와야 검증도 의미가 있다.)
+
+## BeanValidation 메시지 찾는 순서
+1. 생성된 메시지 코드 순서대로 messageSource 에서 메시지 찾기
+2. 애노테이션의 message 속성 사용 @NotBlank(message = "공백! {0}")
+3. 라이브러리가 제공하는 기본 값 사용 공백일 수 없습니다.
+
+## BeanValidation Groups (상황에 따른 객체 사용)
+기능에 따라 group을 만들고 bean validation 적용
+### 1. group Interface 만들기
+```
+public interface SaveCheck {
+}
+
+```
+### 2. Bean validation에 group 설정
+```
+ @NotNull(groups = UpdateCheck.class)
+private Long id;
+
+@NotBlank(groups = {SaveCheck.class, UpdateCheck.class})
+private String itemName;
+```
+### 3. Controller에 group 설정
+public String editV2(@PathVariable Long itemId, @Validated_**(UpdateCheck.class)**_ @ModelAttribute Item item, BindingResult bindingResult)
+
+public String addItemV2(@Validated_(**SaveCheck.class**)_ @ModelAttribute Item item, BindingResult bindingResult, RedirectAttributes redirectAttributes) {
+
+> groups 기능은 실무에서는 잘 사용하지 않는다. 왜냐하면 등록, 수정과 같은 기능은 다른 커맨드 객체로 사용하기 떄문에 화면을 거의 다르게 사용하고 groups 세팅은 좀 복잡하기 떄문에
+
+## Validation 종류별 객체사용 (Groups 사용하지 않고 기능별 dto 사용)
+
+### 1.기능에 따른 DTO(Form..등) 생성
+```
+@Data
+public class ItemSaveForm {
+
+    private Long id;
+
+    @NotBlank
+    private String itemName;
+
+    @NotNull
+    @Range(min=1000, max=1000000)
+    private Integer price;
+
+    @NotNull
+    @Max(value = 9999)
+    private Integer quantity;
+
+}
+```
+
+### 2. Controller Validation 수정
+```
+public String addItem(@Validated @ModelAttribute("item") ItemSaveForm form, BindingResult bindingResult, RedirectAttributes redirectAttributes, Model model) {..
+```
+
+>@ModelAttribute("item") ItemSaveForm form
+-> ("item")은 모델의 이름이다. 만약 안넣으면 자동으로 객체이름 (첫번째소문자 시작 : itemSaveForm)이 default값이다.
+따라서 원하는 모델이름이 있다면 위와같이 세팅한다.
+: 위 경우는 html에서 이미 item 모델로 쓰여있기 때문에 수정을 최소화하기 위해 이름을 세팅한다.
+
+
+## HTTP 메시지 컨버터
+### @ModelAttribute vs @RequestBody
+HTTP 요청 파리미터를 처리하는 @ModelAttribute 는 각각의 필드 단위로 세밀하게 적용된다. 그래서 특정 필드에 타입이 맞지 않는 오류가 발생해도 나머지 필드는 정상 처리할 수 있었다.
+HttpMessageConverter 는 @ModelAttribute 와 다르게 각각의 필드 단위로 적용되는 것이 아니라, 전체 객체 단위로 적용된다.
+따라서 메시지 컨버터의 작동이 성공해서 Item 객체를 만들어야 @Valid , @Validated 가 적용된다.
+
+@ModelAttribute 는 필드 단위로 정교하게 바인딩이 적용된다. 특정 필드가 바인딩 되지 않아도 나머지 필드는 정상 바인딩 되고, Validator를 사용한 검증도 적용할 수 있다.
+@RequestBody 는 HttpMessageConverter 단계에서 JSON 데이터를 객체로 변경하지 못하면 이후 단계 자체가 진행되지 않고 예외가 발생한다. 컨트롤러도 호출되지 않고, Validator도 적용할 수 없다.
+
+>HttpMessageConverter 단계(Request 객체화)에서 실패하면 예외가 발생한다. 즉 Validation 전에 에러 발생된다.
